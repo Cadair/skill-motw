@@ -1,4 +1,4 @@
-import regex
+import re as regex
 from textwrap import dedent
 from random import randint
 
