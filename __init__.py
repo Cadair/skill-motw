@@ -73,6 +73,7 @@ async def help(opsdroid, config, message):
         </p>\
     """))
 
+
 @match_regex(f"(?P<nick>[^!]*){STAT_REGEX}", case_sensitive=False)
 async def set_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
@@ -134,7 +135,7 @@ async def roll(opsdroid, config, message):
     number_result = d1 + d2 + stat
     if number_result <= 6:
         result = "Failure"
-    elif number_result <= 10:
+    elif number_result < 10:
         result = "Mixed Success"
     else:
         result = "Full Success"
