@@ -58,7 +58,6 @@ async def help(opsdroid, config, message):
         <p>
         You can roll against these stats by typing <code>+stat</code>, i.e. <code>+Weird</code>.
         </p>
-
         <p>
         You can set your stats with <code>!stat number</code>, i.e. <code>!weird +1</code> you can
         set as many stats as you like in one command, i.e.
@@ -140,7 +139,7 @@ async def roll(opsdroid, config, message):
     else:
         result = "Full Success"
 
-    stat_sign = "+" if stat > 1 else "-"
+    stat_sign = "-" if stat < 0 else "+"
     await message.respond(
-        f"You rolled {d1} + {d2} {stat_sign} {abs(stat)} = {number_result} ({result})"
+        f'<a href="https://matrix.to/#/{message.user_id}">{message.user}</a> rolled {d1} + {d2} {stat_sign} {abs(stat)} = {number_result} ({result})'
     )
