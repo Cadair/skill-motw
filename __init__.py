@@ -85,17 +85,18 @@ async def set_stats(opsdroid, config, message):
     stats = tuple(s.split(' ') for s in stats)
     stats = dict((s[0].lower()[1:], int(s[1])) for s in stats)
 
-    existing_stats = await opsdroid.memory.get("motw_stats")
-    if not existing_stats or mxid not in existing_stats:
+    all_stats = await opsdroid.memory.get("motw_stats") or {}
+    if not all_stats or mxid not in all_stats:
         existing_stats = {}
     else:
-        existing_stats = existing_stats[mxid]
+        existing_stats = all_stats[mxid]
 
     stats = {**existing_stats, **stats}
 
     await message.respond(f"Setting stats for {nick}: {pretty_stats(stats)}")
 
-    await opsdroid.memory.put("motw_stats", {mxid: stats})
+    new_stats = {**all_stats, **{mxid: stats}}
+    await opsdroid.memory.put("motw_stats", new_stats)
 
 
 @match_regex("!stats ?(?P<nick>.*)")
