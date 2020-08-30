@@ -55,7 +55,7 @@ def memory_in_event_room(func):
     @wraps(func)
     async def _wrapper(opsdroid, config, message):
         db = opsdroid.get_database("matrix")
-        if not db:
+        if not db or not hasattr(db, "memory_in_room"):
             return await func(opsdroid, config, message)
         with db.memory_in_room(message.target):
             return await func(opsdroid, config, message)
