@@ -6,7 +6,8 @@ from functools import wraps
 from opsdroid.matchers import match_regex, match_event
 from opsdroid.events import UserInvite, JoinRoom
 
-STAT_REGEX = "(?:(?:!cool|!tough|!sharp|!charm|!weird) [+-]?[0,1,2,3])"
+MODIFIER_REGEX = "[+-]?[0,1,2,3]"
+STAT_REGEX = f"(?:(?:!cool|!tough|!sharp|!charm|!weird) {MODIFIER_REGEX})"
 
 
 async def get_mxid(nick, room, connector):
@@ -76,6 +77,7 @@ async def help(opsdroid, config, message):
         </ul>
         <p>
         You can roll against these stats by typing <code>+stat</code>, i.e. <code>+Weird</code>.
+        You can append a single modifier on a roll by doing <code>+stat +x</code>, i.e. <code>+weird -1</code>.
         </p>
         <p>
         You can set your stats with <code>!stat number</code>, i.e. <code>!weird +1</code> you can
@@ -134,10 +136,12 @@ async def get_stats(opsdroid, config, message):
     await message.respond(f"Stats for {nick}: {pretty_stats(stats)}")
 
 
-@match_regex(r"\+(?P<stat>cool|tough|sharp|charm|weird)", case_sensitive=False)
+@match_regex(rf"\+(?P<stat>cool|tough|sharp|charm|weird) ?(?P<modifier>{MODIFIER_REGEX})?", case_sensitive=False)
 @memory_in_event_room
 async def roll(opsdroid, config, message):
-    stat = message.regex.string[1:].lower()
+    stat = message.regex.capturesdict()['stat'][0]
+    modifier = message.regex.groupdict()['modifier'] or 0
+    modifier = int(modifier)
     mxid = message.user_id
 
     motw_stats = await opsdroid.memory.get("motw_stats")
@@ -156,7 +160,7 @@ async def roll(opsdroid, config, message):
 
     stat = stats[stat]
     d1, d2 = two_d6()
-    number_result = d1 + d2 + stat
+    number_result = d1 + d2 + stat + modifier
     if number_result <= 6:
         result = "Failure"
     elif number_result < 10:
@@ -165,6 +169,13 @@ async def roll(opsdroid, config, message):
         result = "Full Success"
 
     stat_sign = "-" if stat < 0 else "+"
+    mod_sign = "-" if modifier < 0 else "+"
+
+    if modifier != 0:
+        without_mod = d1 + d2 + stat
+        equation = f"{d1} + {d2} {stat_sign} {abs(stat)} = {without_mod} {mod_sign} {abs(modifier)}"
+    else:
+        equation = f"{d1} + {d2} {stat_sign} {abs(stat)}"
     await message.respond(
-        f'<a href="https://matrix.to/#/{message.user_id}">{message.user}</a> rolled {d1} + {d2} {stat_sign} {abs(stat)} = {number_result} ({result})'
+        f'<a href="https://matrix.to/#/{message.user_id}">{message.user}</a> rolled {equation} = {number_result} ({result})'
     )
