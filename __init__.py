@@ -1,8 +1,10 @@
 import re as regex
 from textwrap import dedent
 from random import randint
+from functools import wraps
 
-from opsdroid.matchers import match_regex
+from opsdroid.matchers import match_regex, match_event
+from opsdroid.events import UserInvite, JoinRoom
 
 STAT_REGEX = "(?:(?:!cool|!tough|!sharp|!charm|!weird) [+-]?[0,1,2,3])"
 
@@ -42,6 +44,23 @@ def two_d6():
     return randint(1, 6), randint(1, 6)
 
 
+@match_event(UserInvite)
+async def respond_to_invites(opdroid, config, invite):
+    if config.get('autoinvite', False):
+        return await invite.respond(JoinRoom())
+
+
+def memory_in_event_room(func):
+    @wraps(func)
+    async def _wrapper(opsdroid, config, message):
+        db = opsdroid.get_database("matrix")
+        if not db:
+            return await func(opsdroid, config, message)
+        with db.memory_in_room(message.target):
+            return await func(opsdroid, config, message)
+    return _wrapper
+
+
 @match_regex("!help")
 async def help(opsdroid, config, message):
     await message.respond(dedent("""\
@@ -74,6 +93,7 @@ async def help(opsdroid, config, message):
 
 
 @match_regex(f"(?P<nick>[^!]*){STAT_REGEX}", case_sensitive=False)
+@memory_in_event_room
 async def set_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
 
@@ -100,11 +120,14 @@ async def set_stats(opsdroid, config, message):
 
 
 @match_regex("!stats ?(?P<nick>.*)")
+@memory_in_event_room
 async def get_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
+
+    database = opsdroid.get_database("matrix")
     motw_stats = await opsdroid.memory.get("motw_stats")
     if not motw_stats or mxid not in motw_stats:
-        await message.respond(f"No stats for {nick}.")
+        await message.respond(rf"No stats found for {nick}, run '!<stat> +number'")
         return
 
     stats = motw_stats[mxid]
@@ -112,6 +135,7 @@ async def get_stats(opsdroid, config, message):
 
 
 @match_regex(r"\+(?P<stat>cool|tough|sharp|charm|weird)", case_sensitive=False)
+@memory_in_event_room
 async def roll(opsdroid, config, message):
     stat = message.regex.string[1:].lower()
     mxid = message.user_id
