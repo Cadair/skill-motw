@@ -6,6 +6,8 @@ from functools import wraps
 from opsdroid.matchers import match_regex, match_event
 from opsdroid.events import UserInvite, JoinRoom, Event, Message
 
+from nio.responses import JoinedMembersError
+
 
 class MarkExperience(Event):
     _no_register = True
@@ -17,10 +19,13 @@ STAT_REGEX = f"(?:(?:!cool|!tough|!sharp|!charm|!weird) {MODIFIER_REGEX})"
 
 
 async def get_mxid(nick, room, connector):
-    members = await connector.connection.get_room_members(
+    members = await connector.connection.joined_members(
         connector.lookup_target(room)
     )
-    members = {m['content']['displayname']: m['state_key'] for m in members['chunk']}
+    if isinstance(members, JoinedMembersError):
+        return None
+
+    members = {member.display_name: member.user_id for member in members.members}
     return members.get(nick, None)
 
 
@@ -28,7 +33,7 @@ async def get_nick(config, message):
     nick = message.user
     mxid = message.user_id
     if message.user_id == config.get('keeper', None):
-        message_nick = message.regex.groupdict()['nick'].strip()
+        message_nick = message.regex.groupdict().get('nick', '').strip()
         if message_nick:
             nick = message_nick
             mxid = await get_mxid(nick, message.target, message.connector)
@@ -231,12 +236,11 @@ async def update_exp(opsdroid, mxid, room_id, set_exp=None):
 @match_event(MarkExperience)
 @memory_in_event_room
 async def add_experience(opsdroid, config, experience):
-    nick, mxid = await get_nick(config, experience)
+    all_exp = await update_exp(opsdroid, experience.user_id, experience.target)
+    exp = all_exp[experience.user_id]
 
-    all_exp = await update_exp(opsdroid, mxid, experience.target)
-    exp = all_exp[mxid]
-
-    await experience.respond(Message(f"{nick} now has {exp} experience."))
+    await experience.respond(
+        Message(f"{experience.user} now has {exp} experience."))
 
     if exp >= 5:
         await experience.respond(
@@ -244,26 +248,28 @@ async def add_experience(opsdroid, config, experience):
         )
 
 
-@match_regex(r"\+experience", case_sensitive=False)
+@match_regex(r"\+experience ?(?P<nick>.*)", case_sensitive=False)
 async def mark_experience(opsdroid, config, message):
-    exp = MarkExperience(user_id=message.user_id, user=message.user,
+    nick, mxid = await get_nick(config, message)
+    exp = MarkExperience(user_id=mxid, user=nick,
                          target=message.target, connector=message.connector)
 
     return await opsdroid.parse(exp)
 
 
-@match_regex(r"\!experience", case_sensitive=False)
+@match_regex("!experience ?(?P<nick>.*)", case_sensitive=False)
+@memory_in_event_room
 async def get_experience(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
     all_exp = await opsdroid.memory.get("motw_experience") or {}
 
     if not all_exp or mxid not in all_exp:
-        await message.respond("You don't have any experience.")
-    else:
-        await message.respond(f"You have {all_exp[mxid]} experience.")
+        all_exp[mxid] = 0
+
+    await message.respond(f"{nick} has {all_exp[mxid]} experience.")
 
 
-@match_regex(r"\!levelup", case_sensitive=False)
+@match_regex(r"\!levelup ?(?P<nick>.*)", case_sensitive=False)
 @memory_in_event_room
 async def level_up(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
@@ -276,9 +282,9 @@ async def level_up(opsdroid, config, message):
         exp = all_exp[mxid]
 
     if exp < 5:
-        await message.respond("You don't have enough experience to level up.")
+        await message.respond(f"{nick} does not have enough experience to level up.")
         return
 
     await update_exp(opsdroid, mxid, message.target, set_exp=0)
 
-    await message.respond(Message("You have levelled up 🎉"))
+    await message.respond(Message(f"{nick} has levelled up 🎉"))
