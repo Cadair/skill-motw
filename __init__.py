@@ -285,6 +285,6 @@ async def level_up(opsdroid, config, message):
         await message.respond(f"{nick} does not have enough experience to level up.")
         return
 
-    await update_exp(opsdroid, mxid, message.target, set_exp=0)
+    await update_exp(opsdroid, mxid, message.target, set_exp=exp - 5)
 
     await message.respond(Message(f"{nick} has levelled up 🎉"))
