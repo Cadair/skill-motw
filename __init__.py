@@ -4,7 +4,13 @@ from random import randint
 from functools import wraps
 
 from opsdroid.matchers import match_regex, match_event
-from opsdroid.events import UserInvite, JoinRoom
+from opsdroid.events import UserInvite, JoinRoom, Event, Message
+
+
+class MarkExperience(Event):
+    _no_register = True
+    pass
+
 
 MODIFIER_REGEX = "[+-]?[0,1,2,3]"
 STAT_REGEX = f"(?:(?:!cool|!tough|!sharp|!charm|!weird) {MODIFIER_REGEX})"
@@ -46,7 +52,7 @@ def two_d6():
 
 
 @match_event(UserInvite)
-async def respond_to_invites(opdroid, config, invite):
+async def respond_to_invites(opsdroid, config, invite):
     if config.get('autoinvite', False):
         return await invite.respond(JoinRoom())
 
@@ -66,8 +72,11 @@ def memory_in_event_room(func):
 async def help(opsdroid, config, message):
     await message.respond(dedent("""\
         <p>
-        This bot can make checks against your stats. The possible stats are:
+        This bot makes checks against your stats, and tracks your experience.
         </p>
+        <h1>
+        Making Checks
+        </h1>
         <ul>
             <li>Charm</li>
             <li>Cool</li>
@@ -86,6 +95,15 @@ async def help(opsdroid, config, message):
         </p>
         <p>
         You can retrieve your characters stats with <code>!stats</code>.
+        </p>
+        <h1>
+        Experience
+        </h1>
+        <p>
+        When you roll a failure the bot will store and experience for you.
+        You can manually mark experience by running <code>+experience</code>.
+        To level up run <code>!levelup</code>.
+        To check your current experience run <code>!experience</code>.
         </p>
         <p>
         Remember you can set your nick to your character name with
@@ -126,7 +144,6 @@ async def set_stats(opsdroid, config, message):
 async def get_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
 
-    database = opsdroid.get_database("matrix")
     motw_stats = await opsdroid.memory.get("motw_stats")
     if not motw_stats or mxid not in motw_stats:
         await message.respond(rf"No stats found for {nick}, run '!<stat> +number'")
@@ -179,3 +196,89 @@ async def roll(opsdroid, config, message):
     await message.respond(
         f'<a href="https://matrix.to/#/{message.user_id}">{message.user}</a> rolled {equation} = {number_result} ({result})'
     )
+
+    if number_result <= 6:
+        await opsdroid.parse(MarkExperience(user_id=message.user_id,
+                                            user=message.user,
+                                            target=message.target,
+                                            connector=message.connector))
+
+
+async def update_exp(opsdroid, mxid, room_id, set_exp=None):
+    db = opsdroid.get_database("matrix")
+
+    with db.memory_in_room(room_id):
+        all_exp = await opsdroid.memory.get("motw_experience") or {}
+
+    if not all_exp or mxid not in all_exp:
+        exp = 0
+    else:
+        exp = all_exp[mxid]
+
+    if set_exp is not None:
+        exp = set_exp
+    else:
+        exp += 1
+
+    all_exp[mxid] = exp
+
+    with db.memory_in_room(room_id):
+        await opsdroid.memory.put("motw_experience", all_exp)
+
+    return all_exp
+
+
+@match_event(MarkExperience)
+@memory_in_event_room
+async def add_experience(opsdroid, config, experience):
+    nick, mxid = await get_nick(config, experience)
+
+    all_exp = await update_exp(opsdroid, mxid, experience.target)
+    exp = all_exp[mxid]
+
+    await experience.respond(Message(f"{nick} now has {exp} experience."))
+
+    if exp >= 5:
+        await experience.respond(
+            Message("You have 5 experience you can level up!")
+        )
+
+
+@match_regex(r"\+experience", case_sensitive=False)
+async def mark_experience(opsdroid, config, message):
+    exp = MarkExperience(user_id=message.user_id, user=message.user,
+                         target=message.target, connector=message.connector)
+
+    return await opsdroid.parse(exp)
+
+
+@match_regex(r"\!experience", case_sensitive=False)
+async def get_experience(opsdroid, config, message):
+    nick, mxid = await get_nick(config, message)
+    all_exp = await opsdroid.memory.get("motw_experience") or {}
+
+    if not all_exp or mxid not in all_exp:
+        await message.respond("You don't have any experience.")
+    else:
+        await message.respond(f"You have {all_exp[mxid]} experience.")
+
+
+@match_regex(r"\!levelup", case_sensitive=False)
+@memory_in_event_room
+async def level_up(opsdroid, config, message):
+    nick, mxid = await get_nick(config, message)
+
+    all_exp = await opsdroid.memory.get("motw_experience") or {}
+
+    if not all_exp or mxid not in all_exp:
+        exp = 0
+    else:
+        exp = all_exp[mxid]
+
+    if exp < 5:
+        await message.respond("You don't have enough experience to level up.")
+        return
+
+    await update_exp(opsdroid, mxid, message.target, set_exp=0)
+
+    await message.respond(Message("You have levelled up 🎉"))
