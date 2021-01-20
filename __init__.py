@@ -15,7 +15,17 @@ class MarkExperience(Event):
 
 
 MODIFIER_REGEX = "[+-]?[0,1,2,3]"
-STAT_REGEX = f"(?:(?:!cool|!tough|!sharp|!charm|!weird) {MODIFIER_REGEX})"
+GAME_STATS = {"motw": ["cool", "tough", "sharp", "charm", "weird"]}
+stat_regexes = {}
+
+def filter_by_game_stats(string, room, db):
+    if room not in stat_regexes.keys():
+        with db.memory_in_room(room):
+            game = await opsdroid.memory.get("game_rules") or {}
+        stats_re = f"(?:(?:{'|'.join(['!'+s for s in GAME_STATS[game]])}) {MODIFIER_REGEX})"
+        stat_regexes[room] = stats_re
+    stats = regex.findall(stat_regexes[room], string, flags=regex.IGNORECASE)
+    return stats
 
 
 async def get_mxid(nick, room, connector):
