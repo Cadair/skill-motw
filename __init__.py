@@ -26,19 +26,11 @@ async def set_game(opsdroid, config, message):
     if game not in GAME_STATS.keys():
         message.respond(f"I don't know how to play that. Available options are: {', '.join(GAME_STATS.keys())}")
         return
-    await opsdroid.memory.put(f"{game}_stats", GAME_STATS[game])
-
-
-async def get_game(room):
-    with db.memory_in_room(room):
-        game = await opsdroid.memory.get("game_rules") or {}
-    return game
+    await opsdroid.memory.put(f"pbta_stats", GAME_STATS[game])
 
 
 async def get_stats(room):
-    game = await get_game(room)
-    stats = GAME_STATS[game] if game else []
-    return stats
+    return await opsdroid.memory.get("pbta_stats", [])
 
 
 def html_list(sequence):
@@ -49,6 +41,8 @@ def html_list(sequence):
 async def filter_by_game_stats(string, room, db):
     if room not in stat_regexes.keys():
         gamestats = await get_stats(room)
+        if not gamestats:
+            return []
         stats_re = f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})"
         stat_regexes[room] = stats_re
     stats = regex.findall(stat_regexes[room], string, flags=regex.IGNORECASE)
@@ -159,11 +153,13 @@ async def set_stats(opsdroid, config, message):
         stats = message.text.split(nick)[1]
 
     stats = filter_by_game_stats(stats, message.target, opsdroid.get_database("matrix"))
+    if not stats:
+        await message.respond("I can't find any stats, are you sure you've told me what game we're playing?")
+        return
     stats = tuple(s.split(' ') for s in stats)
     stats = dict((s[0].lower()[1:], int(s[1])) for s in stats)
 
-    game = await opsdroid.memory.get("game_rules") or {}
-    all_stats = await opsdroid.memory.get(f"{game}_stats") or {}
+    all_stats = await opsdroid.memory.get(f"pbta_stats") or {}
     if not all_stats or mxid not in all_stats:
         existing_stats = {}
     else:
@@ -174,7 +170,7 @@ async def set_stats(opsdroid, config, message):
     await message.respond(f"Setting stats for {nick}: {pretty_stats(stats)}")
 
     new_stats = {**all_stats, **{mxid: stats}}
-    await opsdroid.memory.put(f"{game}_stats", new_stats)
+    await opsdroid.memory.put(f"pbta_stats", new_stats)
 
 
 @match_regex("!stats ?(?P<nick>.*)")
@@ -182,8 +178,7 @@ async def set_stats(opsdroid, config, message):
 async def get_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
 
-    game = await opsdroid.memory.get("game_rules") or {}
-    all_stats = await opsdroid.memory.get(f"{game}_stats")
+    all_stats = await opsdroid.memory.get(f"pbta_stats")
     if not all_stats or mxid not in all_stats:
         await message.respond(rf"No stats found for {nick}, run '!<stat> +number'")
         return
@@ -200,8 +195,7 @@ async def roll(opsdroid, config, message):
     modifier = int(modifier)
     mxid = message.user_id
 
-    game = await opsdroid.memory.get("game_rules") or {}
-    all_stats = await opsdroid.memory.get(f"{game}_stats")
+    all_stats = await opsdroid.memory.get(f"pbta_stats")
 
     if not all_stats or mxid not in all_stats:
         await message.respond(rf"No stats found for {message.user}, run '!{stat} +number'")
