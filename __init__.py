@@ -19,6 +19,16 @@ GAME_STATS = {"motw": ["cool", "tough", "sharp", "charm", "weird"],
               "pbtastartrek": ["aggressive", "bold", "talk", "tech"]}
 stat_regexes = {}
 
+@match_regex(r"\!set game ?(?P<gamename>.*)", case_sensitive=False)
+@memory_in_event_room
+async def set_game(opsdroid, config, message):
+    game = message.regex.capturesdict()['gamename'][0]
+    if game not in GAME_STATS.keys():
+        message.respond(f"I don't know how to play that. Available options are: {', '.join(GAME_STATS.keys())}")
+        return
+    await opsdroid.memory.put(f"{game}_stats", GAME_STATS[game])
+
+
 async def get_game(room):
     with db.memory_in_room(room):
         game = await opsdroid.memory.get("game_rules") or {}
