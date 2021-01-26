@@ -15,14 +15,31 @@ class MarkExperience(Event):
 
 
 MODIFIER_REGEX = "[+-]?[0,1,2,3]"
-GAME_STATS = {"motw": ["cool", "tough", "sharp", "charm", "weird"]}
+GAME_STATS = {"motw": ["cool", "tough", "sharp", "charm", "weird"],
+              "pbtastartrek": ["aggressive", "bold", "talk", "tech"]}
 stat_regexes = {}
 
-def filter_by_game_stats(string, room, db):
+async def get_game(room):
+    with db.memory_in_room(room):
+        game = await opsdroid.memory.get("game_rules") or {}
+    return game
+
+
+async def get_stats(room):
+    game = await get_game(room)
+    stats = GAME_STATS[game] if game else []
+    return stats
+
+
+def html_list(sequence):
+    html_stats = ''.join([f"<li>{s.capitalize()}</li>" for s in sequence])
+    return f"<ul>{html_stats}</ul>"
+
+
+async def filter_by_game_stats(string, room, db):
     if room not in stat_regexes.keys():
-        with db.memory_in_room(room):
-            game = await opsdroid.memory.get("game_rules") or {}
-        stats_re = f"(?:(?:{'|'.join(['!'+s for s in GAME_STATS[game]])}) {MODIFIER_REGEX})"
+        gamestats = await get_stats(room)
+        stats_re = f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})"
         stat_regexes[room] = stats_re
     stats = regex.findall(stat_regexes[room], string, flags=regex.IGNORECASE)
     return stats
@@ -85,28 +102,23 @@ def memory_in_event_room(func):
 
 @match_regex("!help")
 async def help(opsdroid, config, message):
-    await message.respond(dedent("""\
+    stats = await get_stats(message.room)
+    await message.respond(dedent(f"""\
         <p>
         This bot makes checks against your stats, and tracks your experience.
         </p>
         <h1>
         Making Checks
         </h1>
-        <ul>
-            <li>Charm</li>
-            <li>Cool</li>
-            <li>Sharp</li>
-            <li>Tough</li>
-            <li>Weird</li>
-        </ul>
+        {html_list(stats)}
         <p>
-        You can roll against these stats by typing <code>+stat</code>, i.e. <code>+Weird</code>.
-        You can append a single modifier on a roll by doing <code>+stat +x</code>, i.e. <code>+weird -1</code>.
+        You can roll against these stats by typing <code>+stat</code>, i.e. <code>+{stats[-1]}</code>.
+        You can append a single modifier on a roll by doing <code>+stat +x</code>, i.e. <code>+{stats[-1]} -1</code>.
         </p>
         <p>
-        You can set your stats with <code>!stat number</code>, i.e. <code>!weird +1</code> you can
+        You can set your stats with <code>!stat number</code>, i.e. <code>!{stats[-1]} +1</code> you can
         set as many stats as you like in one command, i.e.
-        <code>!weird +1 !charm +1 !sharp -1</code>.
+        <code>!{stats[-1]} +1 !{stats[-2]} +1 !{stats[-3]} -1</code>.
         </p>
         <p>
         You can retrieve your characters stats with <code>!stats</code>.
@@ -127,7 +139,7 @@ async def help(opsdroid, config, message):
     """))
 
 
-@match_regex(f"(?P<nick>[^!]*){STAT_REGEX}", case_sensitive=False)
+@match_regex(f"(?P<nick>[^!]*){+.*}", case_sensitive=False)
 @memory_in_event_room
 async def set_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
@@ -136,11 +148,12 @@ async def set_stats(opsdroid, config, message):
     if nick != message.user:
         stats = message.text.split(nick)[1]
 
-    stats = regex.findall(STAT_REGEX, stats, flags=regex.IGNORECASE)
+    stats = filter_by_game_stats(stats, message.target, opsdroid.get_database("matrix"))
     stats = tuple(s.split(' ') for s in stats)
     stats = dict((s[0].lower()[1:], int(s[1])) for s in stats)
 
-    all_stats = await opsdroid.memory.get("motw_stats") or {}
+    game = await opsdroid.memory.get("game_rules") or {}
+    all_stats = await opsdroid.memory.get(f"{game}_stats") or {}
     if not all_stats or mxid not in all_stats:
         existing_stats = {}
     else:
@@ -151,7 +164,7 @@ async def set_stats(opsdroid, config, message):
     await message.respond(f"Setting stats for {nick}: {pretty_stats(stats)}")
 
     new_stats = {**all_stats, **{mxid: stats}}
-    await opsdroid.memory.put("motw_stats", new_stats)
+    await opsdroid.memory.put(f"{game}_stats", new_stats)
 
 
 @match_regex("!stats ?(?P<nick>.*)")
@@ -159,12 +172,13 @@ async def set_stats(opsdroid, config, message):
 async def get_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
 
-    motw_stats = await opsdroid.memory.get("motw_stats")
-    if not motw_stats or mxid not in motw_stats:
+    game = await opsdroid.memory.get("game_rules") or {}
+    all_stats = await opsdroid.memory.get(f"{game}_stats")
+    if not all_stats or mxid not in all_stats:
         await message.respond(rf"No stats found for {nick}, run '!<stat> +number'")
         return
 
-    stats = motw_stats[mxid]
+    stats = all_stats[mxid]
     await message.respond(f"Stats for {nick}: {pretty_stats(stats)}")
 
 
@@ -176,13 +190,14 @@ async def roll(opsdroid, config, message):
     modifier = int(modifier)
     mxid = message.user_id
 
-    motw_stats = await opsdroid.memory.get("motw_stats")
+    game = await opsdroid.memory.get("game_rules") or {}
+    all_stats = await opsdroid.memory.get(f"{game}_stats")
 
-    if not motw_stats or mxid not in motw_stats:
+    if not all_stats or mxid not in all_stats:
         await message.respond(rf"No stats found for {message.user}, run '!{stat} +number'")
         return
 
-    stats = motw_stats[mxid]
+    stats = all_stats[mxid]
 
     if stat not in stats:
         await message.respond(
@@ -223,7 +238,7 @@ async def update_exp(opsdroid, mxid, room_id, set_exp=None):
     db = opsdroid.get_database("matrix")
 
     with db.memory_in_room(room_id):
-        all_exp = await opsdroid.memory.get("motw_experience") or {}
+        all_exp = await opsdroid.memory.get("ptba_experience") or {}
 
     if not all_exp or mxid not in all_exp:
         exp = 0
@@ -238,7 +253,7 @@ async def update_exp(opsdroid, mxid, room_id, set_exp=None):
     all_exp[mxid] = exp
 
     with db.memory_in_room(room_id):
-        await opsdroid.memory.put("motw_experience", all_exp)
+        await opsdroid.memory.put("ptba_experience", all_exp)
 
     return all_exp
 
