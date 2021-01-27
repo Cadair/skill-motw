@@ -17,7 +17,7 @@ class MarkExperience(Event):
 MODIFIER_REGEX = "[+-]?[0,1,2,3]"
 GAME_STATS = {"motw": ["cool", "tough", "sharp", "charm", "weird"],
               "pbtastartrek": ["aggressive", "bold", "talk", "tech"]}
-stat_regexes = {}
+STAT_REGEXES = {}
 
 @match_regex(r"\!set game ?(?P<gamename>.*)", case_sensitive=False)
 @memory_in_event_room
@@ -39,13 +39,13 @@ def html_list(sequence):
 
 
 async def filter_by_game_stats(string, room):
-    if room not in stat_regexes.keys():
+    if room not in STAT_REGEXES.keys():
         gamestats = await get_stats(room)
         if not gamestats:
             return []
-        stats_re = f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})"
-        stat_regexes[room] = stats_re
-    stats = regex.findall(stat_regexes[room], string, flags=regex.IGNORECASE)
+        stats_re = regex.compile(f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})")
+        STAT_REGEXES[room] = stats_re
+    stats = regex.findall(STAT_REGEXES[room], string, flags=regex.IGNORECASE)
     return stats
 
 
