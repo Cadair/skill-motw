@@ -128,13 +128,13 @@ async def help(opsdroid, config, message):
         </h1>
         {html_list(stats)}
         <p>
-        You can roll against these stats by typing <code>+stat</code>, i.e. <code>+{stats[-1]}</code>.
-        You can append a single modifier on a roll by doing <code>+stat +x</code>, i.e. <code>+{stats[-1]} -1</code>.
+        You can roll against these stats by typing <code>+stat</code>, i.e. <code>+{stats[4]}</code>.
+        You can append a single modifier on a roll by doing <code>+stat +x</code>, i.e. <code>+{stats[4]} -1</code>.
         </p>
         <p>
-        You can set your stats with <code>!stat number</code>, i.e. <code>!{stats[-1]} +1</code> you can
+        You can set your stats with <code>!stat number</code>, i.e. <code>!{stats[4]} +1</code> you can
         set as many stats as you like in one command, i.e.
-        <code>!{stats[-1]} +1 !{stats[-2]} +1 !{stats[-3]} -1</code>.
+        <code>!{stats[1]} +1 !{stats[2]} +1 !{stats[3]} -1</code>.
         </p>
         <p>
         You can retrieve your characters stats with <code>!stats</code>.
