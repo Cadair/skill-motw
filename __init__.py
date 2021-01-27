@@ -4,7 +4,7 @@ from random import randint
 from functools import wraps
 
 from opsdroid.matchers import match_regex, match_event
-from opsdroid.events import UserInvite, JoinRoom, Event, Message
+from opsdroid.events import UserInvite, JoinRoom, Event, Message, OpsdroidStarted
 
 from nio.responses import JoinedMembersError
 
@@ -19,6 +19,15 @@ GAME_STATS = {"motw": ["cool", "tough", "sharp", "charm", "weird"],
               "pbtastartrek": ["aggressive", "bold", "talk", "tech"]}
 STAT_REGEXES = {}
 
+
+@match_event(OpsdroidStarted)
+@memory_in_event_room
+async def migrate_old_keys(opsdroid, config, message):
+    old_key = await opsdroid.memory.get("motw_stats") or {}
+    if old_key:
+        await opsdroid.memory.put("pbta_stats", old_key)
+
+
 @match_regex(r"\!set game ?(?P<gamename>.*)", case_sensitive=False)
 @memory_in_event_room
 async def set_game(opsdroid, config, message):
@@ -26,7 +35,7 @@ async def set_game(opsdroid, config, message):
     if game not in GAME_STATS.keys():
         message.respond(f"I don't know how to play that. Available options are: {', '.join(GAME_STATS.keys())}")
         return
-    await opsdroid.memory.put(f"pbta_stats", GAME_STATS[game])
+    await opsdroid.memory.put("pbta_stats", GAME_STATS[game])
 
 
 async def get_stats(room):
