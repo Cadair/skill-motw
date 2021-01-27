@@ -195,7 +195,7 @@ async def roll(opsdroid, config, message):
     modifier = int(modifier)
     mxid = message.user_id
 
-    all_stats = await opsdroid.memory.get(f"pbta_stats")
+    all_stats = await opsdroid.memory.get("pbta_stats")
 
     if not all_stats or mxid not in all_stats:
         await message.respond(rf"No stats found for {message.user}, run '!{stat} +number'")
