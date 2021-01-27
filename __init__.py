@@ -21,12 +21,14 @@ STAT_REGEXES = {}
 
 
 @match_event(OpsdroidStarted)
-@memory_in_event_room
-async def migrate_old_keys(opsdroid, config, message):
-    old_key = await opsdroid.memory.get("motw_stats") or {}
-    if old_key:
-        await opsdroid.memory.put("pbta_stats", old_key)
-        await opsdroid.memory.put("motw_stats", {})
+async def migrate_old_keys(opsdroid, config, event):
+    db = opsdroid.get_database("matrix")
+    for room in opsdroid.get_connector('matrix').connection.rooms.values():
+        with db.memory_in_room(room.room_id):
+            old_key = await opsdroid.memory.get("motw_stats") or {}
+            if old_key:
+                await opsdroid.memory.put("pbta_stats", old_key)
+                await opsdroid.memory.put("motw_stats", {})
 
 
 @match_regex(r"\!set game ?(?P<gamename>.*)", case_sensitive=False)
