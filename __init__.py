@@ -178,7 +178,7 @@ async def set_stats(opsdroid, config, message):
 async def get_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
 
-    all_stats = await opsdroid.memory.get(f"pbta_stats")
+    all_stats = await opsdroid.memory.get("pbta_stats")
     if not all_stats or mxid not in all_stats:
         await message.respond(rf"No stats found for {nick}, run '!<stat> +number'")
         return
