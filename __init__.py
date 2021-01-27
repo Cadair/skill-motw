@@ -16,7 +16,7 @@ class MarkExperience(Event):
 
 MODIFIER_REGEX = "[+-]?[0,1,2,3]"
 GAME_STATS = {"motw": ["cool", "tough", "sharp", "charm", "weird"],
-              "pbtastartrek": ["aggressive", "bold", "talk", "tech"]}
+              "pbtastartrek": ["aggressive", "bold", "talk", "tech,", "morale", "shields"]}
 STAT_REGEXES = {}
 
 
