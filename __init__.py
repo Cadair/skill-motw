@@ -54,7 +54,7 @@ async def filter_by_game_stats(string, room):
             return []
         stats_re = regex.compile(f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})")
         STAT_REGEXES[room] = stats_re
-    stats = regex.findall(STAT_REGEXES[room], string, flags=regex.IGNORECASE)
+    stats = STAT_REGEXES[room].findall(string, flags=regex.IGNORECASE)
     return stats
 
 
