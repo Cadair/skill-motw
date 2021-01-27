@@ -38,7 +38,7 @@ def html_list(sequence):
     return f"<ul>{html_stats}</ul>"
 
 
-async def filter_by_game_stats(string, room, db):
+async def filter_by_game_stats(string, room):
     if room not in stat_regexes.keys():
         gamestats = await get_stats(room)
         if not gamestats:
