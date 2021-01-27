@@ -1,17 +1,17 @@
 import re as regex
-from textwrap import dedent
-from random import randint
 from functools import wraps
-
-from opsdroid.matchers import match_regex, match_event
-from opsdroid.events import UserInvite, JoinRoom, Event, Message, OpsdroidStarted
+from random import randint
+from textwrap import dedent
 
 from nio.responses import JoinedMembersError
+from opsdroid.database.matrix import memory_in_event_room
+from opsdroid.events import (Event, JoinRoom, Message, OpsdroidStarted,
+                             UserInvite)
+from opsdroid.matchers import match_event, match_regex
 
 
 class MarkExperience(Event):
     _no_register = True
-    pass
 
 
 MODIFIER_REGEX = "[+-]?[0,1,2,3]"
@@ -41,7 +41,7 @@ async def set_game(opsdroid, config, message):
     await opsdroid.memory.put("pbta_stats", GAME_STATS[game])
 
 
-async def get_stats(room):
+async def get_stats(opsdroid, room):
     return await opsdroid.memory.get("pbta_stats", [])
 
 
@@ -50,9 +50,9 @@ def html_list(sequence):
     return f"<ul>{html_stats}</ul>"
 
 
-async def filter_by_game_stats(string, room):
+async def filter_by_game_stats(opsdroid, string, room):
     if room not in STAT_REGEXES.keys():
-        gamestats = await get_stats(room)
+        gamestats = await get_stats(opsdroid, room)
         if not gamestats:
             return []
         stats_re = regex.compile(f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})")
@@ -117,8 +117,8 @@ def memory_in_event_room(func):
 
 
 @match_regex("!help")
-async def help(opsdroid, config, message):
-    stats = await get_stats(message.room)
+async def help_message(opsdroid, config, message):
+    stats = await get_stats(opsdroid, message.room)
     await message.respond(dedent(f"""\
         <p>
         This bot makes checks against your stats, and tracks your experience.
@@ -155,7 +155,7 @@ async def help(opsdroid, config, message):
     """))
 
 
-@match_regex(f"(?P<nick>[^!]*){+.*}", case_sensitive=False)
+@match_regex(f"(?P<nick>[^!]*)+.*", case_sensitive=False)
 @memory_in_event_room
 async def set_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
@@ -164,7 +164,7 @@ async def set_stats(opsdroid, config, message):
     if nick != message.user:
         stats = message.text.split(nick)[1]
 
-    stats = filter_by_game_stats(stats, message.target, opsdroid.get_database("matrix"))
+    stats = await filter_by_game_stats(opsdroid, stats, message.target)
     if not stats:
         await message.respond("I can't find any stats, are you sure you've told me what game we're playing?")
         return
@@ -187,7 +187,7 @@ async def set_stats(opsdroid, config, message):
 
 @match_regex("!stats ?(?P<nick>.*)")
 @memory_in_event_room
-async def get_stats(opsdroid, config, message):
+async def print_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
 
     all_stats = await opsdroid.memory.get("pbta_stats")
