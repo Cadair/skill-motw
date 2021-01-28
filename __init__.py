@@ -144,16 +144,16 @@ async def help_message(opsdroid, config, message):
     """))
 
 
-async def filter_by_game_stats(opsdroid, string, room):
+async def filter_by_game_stats(opsdroid, string, room, action):
     """Match incoming messages against the current games stats."""
     if room not in STAT_REGEXES.keys():
         gamestats = await get_stat_names(opsdroid, room)
         if not gamestats:
             return []
-        stats_re = regex.compile(f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})",
-                                 flags=regex.IGNORECASE)
-        STAT_REGEXES[room] = stats_re
-    stats = STAT_REGEXES[room].findall(string)
+        STAT_REGEXES[room] = {"set": regex.compile(f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})",
+                                                   flags=regex.IGNORECASE),
+                              "roll": regex.compile(f"|".join[gamestats], flags=regex.IGNORECASE)}
+    stats = STAT_REGEXES[room][action].findall(string)
     return stats
 
 
@@ -166,7 +166,7 @@ async def set_stats(opsdroid, config, message):
     if nick != message.user:
         stats = message.text.split(nick)[1]
 
-    stats = await filter_by_game_stats(opsdroid, stats, message.target)
+    stats = await filter_by_game_stats(opsdroid, stats, message.target, "set")
     if not stats:
         await message.respond("I can't find any stats, are you sure you've told me what game we're playing?")
         return
@@ -191,8 +191,7 @@ async def set_stats(opsdroid, config, message):
 @memory_in_event_room
 async def roll(opsdroid, config, message):
     stat = message.regex.capturesdict()['stat'][0]
-    # TODO: filter_by_game_stats has a regex pattern designed for matching set_stats not rolls
-    stat = await filter_by_game_stats(opsdroid, stat, message.target)
+    stat = await filter_by_game_stats(opsdroid, stat, message.target, "roll")
     if not stat:
         return
 
