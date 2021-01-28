@@ -104,7 +104,6 @@ async def respond_to_invites(opsdroid, config, invite):
 async def help_message(opsdroid, config, message):
     stats_message = ""
     stats = await get_stat_names(opsdroid, message.target)
-    print(stats)
     if stats:
         stats_message = dedent(f"""\
             <h1>
