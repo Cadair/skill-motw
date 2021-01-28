@@ -39,28 +39,21 @@ async def set_game(opsdroid, config, message):
     if game not in GAME_STATS.keys():
         message.respond(f"I don't know how to play that. Available options are: {', '.join(GAME_STATS.keys())}")
         return
+
+    if await opsdroid.memory.get("pbta_stat_names") and await opsdroid.memory.get("pbta_stats"):
+        await message.respond(Message("You already have a game in progress, not setting a new one."))
+
     await opsdroid.memory.put("pbta_stat_names", GAME_STATS[game])
 
 
 async def get_stat_names(opsdroid, room):
-    return await opsdroid.memory.get("pbta_stat_names", [])
+    with opsdroid.get_database('matrix').memory_in_room(room):
+        return await opsdroid.memory.get("pbta_stat_names", [])
 
 
 def html_list(sequence):
     html_stats = ''.join([f"<li>{s.capitalize()}</li>" for s in sequence])
     return f"<ul>{html_stats}</ul>"
-
-
-async def filter_by_game_stats(opsdroid, string, room):
-    if room not in STAT_REGEXES.keys():
-        gamestats = await get_stat_names(opsdroid, room)
-        if not gamestats:
-            return []
-        stats_re = regex.compile(f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})",
-                                 flags=regex.IGNORECASE)
-        STAT_REGEXES[room] = stats_re
-    stats = STAT_REGEXES[room].findall(string)
-    return stats
 
 
 async def get_mxid(nick, room, connector):
@@ -105,17 +98,6 @@ def two_d6():
 async def respond_to_invites(opsdroid, config, invite):
     if config.get('autoinvite', False):
         return await invite.respond(JoinRoom())
-
-
-def memory_in_event_room(func):
-    @wraps(func)
-    async def _wrapper(opsdroid, config, message):
-        db = opsdroid.get_database("matrix")
-        if not db or not hasattr(db, "memory_in_room"):
-            return await func(opsdroid, config, message)
-        with db.memory_in_room(message.target):
-            return await func(opsdroid, config, message)
-    return _wrapper
 
 
 @match_regex("!help")
@@ -163,7 +145,20 @@ async def help_message(opsdroid, config, message):
     """))
 
 
-@match_regex("(?P<nick>[^!]*)(?P<stats>\+.*)", case_sensitive=False)
+async def filter_by_game_stats(opsdroid, string, room):
+    """Match incoming messages against the current games stats."""
+    if room not in STAT_REGEXES.keys():
+        gamestats = await get_stat_names(opsdroid, room)
+        if not gamestats:
+            return []
+        stats_re = regex.compile(f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})",
+                                 flags=regex.IGNORECASE)
+        STAT_REGEXES[room] = stats_re
+    stats = STAT_REGEXES[room].findall(string)
+    return stats
+
+
+@match_regex("(?P<nick>[^!]*)(?P<stats>!.*)", case_sensitive=False)
 @memory_in_event_room
 async def set_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
@@ -193,24 +188,15 @@ async def set_stats(opsdroid, config, message):
     await opsdroid.memory.put("pbta_stats", new_stats)
 
 
-@match_regex("!stats ?(?P<nick>.*)")
-@memory_in_event_room
-async def print_stats(opsdroid, config, message):
-    nick, mxid = await get_nick(config, message)
-
-    all_stats = await opsdroid.memory.get("pbta_stats")
-    if not all_stats or mxid not in all_stats:
-        await message.respond(rf"No stats found for {nick}, run '!<stat> +number'")
-        return
-
-    stats = all_stats[mxid]
-    await message.respond(f"Stats for {nick}: {pretty_stats(stats)}")
-
-
-@match_regex(rf"\+(?P<stat>cool|tough|sharp|charm|weird) ?(?P<modifier>{MODIFIER_REGEX})?", case_sensitive=False)
+@match_regex("\+(?P<stat>.*) ?(?P<modifier>{MODIFIER_REGEX})?", case_sensitive=False)
 @memory_in_event_room
 async def roll(opsdroid, config, message):
     stat = message.regex.capturesdict()['stat'][0]
+    # TODO: filter_by_game_stats has a regex pattern designed for matching set_stats not rolls
+    stat = await filter_by_game_stats(opsdroid, stat, message.target)
+    if not stat:
+        return
+
     modifier = message.regex.groupdict()['modifier'] or 0
     modifier = int(modifier)
     mxid = message.user_id
@@ -256,6 +242,20 @@ async def roll(opsdroid, config, message):
                                             user=message.user,
                                             target=message.target,
                                             connector=message.connector))
+
+
+@match_regex("!stats ?(?P<nick>.*)")
+@memory_in_event_room
+async def print_stats(opsdroid, config, message):
+    nick, mxid = await get_nick(config, message)
+
+    all_stats = await opsdroid.memory.get("pbta_stats")
+    if not all_stats or mxid not in all_stats:
+        await message.respond(rf"No stats found for {nick}, run '!<stat> +number'")
+        return
+
+    stats = all_stats[mxid]
+    await message.respond(f"Stats for {nick}: {pretty_stats(stats)}")
 
 
 async def update_exp(opsdroid, mxid, room_id, set_exp=None):
