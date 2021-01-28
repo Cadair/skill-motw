@@ -29,6 +29,7 @@ async def migrate_old_keys(opsdroid, config, event):
             if old_key:
                 await opsdroid.memory.put("pbta_stats", old_key)
                 await opsdroid.memory.delete("motw_stats")
+                await opsdroid.memory.put("pbta_stat_names", GAME_STATS["motw"])
 
 
 @match_regex(r"\!set game ?(?P<gamename>.*)", case_sensitive=False)
@@ -38,11 +39,11 @@ async def set_game(opsdroid, config, message):
     if game not in GAME_STATS.keys():
         message.respond(f"I don't know how to play that. Available options are: {', '.join(GAME_STATS.keys())}")
         return
-    await opsdroid.memory.put("pbta_stats", GAME_STATS[game])
+    await opsdroid.memory.put("pbta_stat_names", GAME_STATS[game])
 
 
-async def get_stats(opsdroid, room):
-    return await opsdroid.memory.get("pbta_stats", [])
+async def get_stat_names(opsdroid, room):
+    return await opsdroid.memory.get("pbta_stat_names", [])
 
 
 def html_list(sequence):
@@ -52,12 +53,13 @@ def html_list(sequence):
 
 async def filter_by_game_stats(opsdroid, string, room):
     if room not in STAT_REGEXES.keys():
-        gamestats = await get_stats(opsdroid, room)
+        gamestats = await get_stat_names(opsdroid, room)
         if not gamestats:
             return []
-        stats_re = regex.compile(f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})")
+        stats_re = regex.compile(f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})",
+                                 flags=regex.IGNORECASE)
         STAT_REGEXES[room] = stats_re
-    stats = STAT_REGEXES[room].findall(string, flags=regex.IGNORECASE)
+    stats = STAT_REGEXES[room].findall(string)
     return stats
 
 
@@ -118,27 +120,33 @@ def memory_in_event_room(func):
 
 @match_regex("!help")
 async def help_message(opsdroid, config, message):
-    stats = await get_stats(opsdroid, message.room)
+    stats_message = ""
+    stats = await get_stat_names(opsdroid, message.target)
+    print(stats)
+    if stats:
+        stats_message = dedent(f"""\
+            <h1>
+            Making Checks
+            </h1>
+            {html_list(stats)}
+            <p>
+            You can roll against these stats by typing <code>+stat</code>, i.e. <code>+{stats[4]}</code>.
+            You can append a single modifier on a roll by doing <code>+stat +x</code>, i.e. <code>+{stats[4]} -1</code>.
+            </p>
+            <p>
+            You can set your stats with <code>!stat number</code>, i.e. <code>!{stats[4]} +1</code> you can
+            set as many stats as you like in one command, i.e.
+            <code>!{stats[1]} +1 !{stats[2]} +1 !{stats[3]} -1</code>.
+            </p>
+            <p>
+            You can retrieve your characters stats with <code>!stats</code>.
+            </p>\
+        """)
     await message.respond(dedent(f"""\
         <p>
         This bot makes checks against your stats, and tracks your experience.
         </p>
-        <h1>
-        Making Checks
-        </h1>
-        {html_list(stats)}
-        <p>
-        You can roll against these stats by typing <code>+stat</code>, i.e. <code>+{stats[4]}</code>.
-        You can append a single modifier on a roll by doing <code>+stat +x</code>, i.e. <code>+{stats[4]} -1</code>.
-        </p>
-        <p>
-        You can set your stats with <code>!stat number</code>, i.e. <code>!{stats[4]} +1</code> you can
-        set as many stats as you like in one command, i.e.
-        <code>!{stats[1]} +1 !{stats[2]} +1 !{stats[3]} -1</code>.
-        </p>
-        <p>
-        You can retrieve your characters stats with <code>!stats</code>.
-        </p>
+        {stats_message}
         <h1>
         Experience
         </h1>
@@ -150,12 +158,12 @@ async def help_message(opsdroid, config, message):
         </p>
         <p>
         Remember you can set your nick to your character name with
-        <code>/myroomnick</code> in Riot if you desire.
+        <code>/myroomnick</code> in Element if you desire.
         </p>\
     """))
 
 
-@match_regex(f"(?P<nick>[^!]*)+.*", case_sensitive=False)
+@match_regex("(?P<nick>[^!]*)(?P<stats>\+.*)", case_sensitive=False)
 @memory_in_event_room
 async def set_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
