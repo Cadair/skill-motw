@@ -188,13 +188,14 @@ async def set_stats(opsdroid, config, message):
     await opsdroid.memory.put("pbta_stats", new_stats)
 
 
-@match_regex("\+(?P<stat>.*) ?(?P<modifier>{MODIFIER_REGEX})?", case_sensitive=False)
+@match_regex(f"\+(?P<stat>\w*) ?(?P<modifier>{MODIFIER_REGEX})?", case_sensitive=False)
 @memory_in_event_room
 async def roll(opsdroid, config, message):
     stat = message.regex.capturesdict()['stat'][0]
     stat = await filter_by_game_stats(opsdroid, stat, message.target, "roll")
     if not stat:
         return
+    stat = stat[0]
 
     modifier = message.regex.groupdict()['modifier'] or 0
     modifier = int(modifier)
