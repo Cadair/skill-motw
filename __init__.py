@@ -30,6 +30,10 @@ async def migrate_old_keys(opsdroid, config, event):
                 await opsdroid.memory.put("pbta_stats", old_key)
                 await opsdroid.memory.delete("motw_stats")
                 await opsdroid.memory.put("pbta_stat_names", GAME_STATS["motw"])
+            old_exp_key = await opsdroid.memory.get("motw_experience")
+            if old_exp_key:
+                await opsdroid.memory.put("pbta_experience", old_exp_key)
+                await opsdroid.memory.delete("motw_experience")
 
 
 @match_regex(r"\!set game ?(?P<gamename>.*)", case_sensitive=False)
