@@ -115,7 +115,7 @@ async def help_message(opsdroid, config, message):
             You can append a single modifier on a roll by doing <code>+stat +x</code>, i.e. <code>+{stats[4]} -1</code>.
             </p>
             <p>
-            You can set your stats with <code>!stat number</code>, i.e. <code>!{stats[4]} +1</code> you can
+            You can set your stats with <code>!stat number</code>, i.e. <code>!{stats[3]} +1</code> you can
             set as many stats as you like in one command, i.e.
             <code>!{stats[1]} +1 !{stats[2]} +1 !{stats[3]} -1</code>.
             </p>
@@ -157,7 +157,7 @@ async def filter_by_game_stats(opsdroid, string, room, action):
     return stats
 
 
-@match_regex("(?P<nick>[^!]*)(?P<stats>!.*)", case_sensitive=False)
+@match_regex("(?P<nick>[^!]*)(?P<stats>!(?!set|help|levelup|stats|experience).*)", case_sensitive=False)
 @memory_in_event_room
 async def set_stats(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
