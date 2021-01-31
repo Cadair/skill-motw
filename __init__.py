@@ -309,7 +309,7 @@ async def mark_experience(opsdroid, config, message):
 @memory_in_event_room
 async def get_experience(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
-    all_exp = await opsdroid.memory.get("motw_experience") or {}
+    all_exp = await opsdroid.memory.get("pbta_experience") or {}
 
     if not all_exp or mxid not in all_exp:
         all_exp[mxid] = 0
@@ -322,7 +322,7 @@ async def get_experience(opsdroid, config, message):
 async def level_up(opsdroid, config, message):
     nick, mxid = await get_nick(config, message)
 
-    all_exp = await opsdroid.memory.get("motw_experience") or {}
+    all_exp = await opsdroid.memory.get("pbta_experience") or {}
 
     if not all_exp or mxid not in all_exp:
         exp = 0
