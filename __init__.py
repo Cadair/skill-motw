@@ -150,7 +150,6 @@ async def filter_by_game_stats(opsdroid, string, room, action):
         gamestats = await get_stat_names(opsdroid, room)
         if not gamestats:
             return []
-        print(gamestats)
         STAT_REGEXES[room] = {"set": regex.compile(f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})",
                                                    flags=regex.IGNORECASE),
                               "roll": regex.compile("|".join(gamestats), flags=regex.IGNORECASE)}
