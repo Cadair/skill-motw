@@ -265,7 +265,7 @@ async def update_exp(opsdroid, mxid, room_id, set_exp=None):
     db = opsdroid.get_database("matrix")
 
     with db.memory_in_room(room_id):
-        all_exp = await opsdroid.memory.get("ptba_experience") or {}
+        all_exp = await opsdroid.memory.get("pbta_experience") or {}
 
     if not all_exp or mxid not in all_exp:
         exp = 0
@@ -280,7 +280,7 @@ async def update_exp(opsdroid, mxid, room_id, set_exp=None):
     all_exp[mxid] = exp
 
     with db.memory_in_room(room_id):
-        await opsdroid.memory.put("ptba_experience", all_exp)
+        await opsdroid.memory.put("pbta_experience", all_exp)
 
     return all_exp
 
