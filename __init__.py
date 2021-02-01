@@ -191,7 +191,7 @@ async def set_stats(opsdroid, config, message):
     await opsdroid.memory.put("pbta_stats", new_stats)
 
 
-@match_regex(f"\+[^experience](?P<stat>\w*) ?(?P<modifier>{MODIFIER_REGEX})?", case_sensitive=False)
+@match_regex(f"\+(?P<stat>\w*[^experience]) ?(?P<modifier>{MODIFIER_REGEX})?", case_sensitive=False)
 @memory_in_event_room
 async def roll(opsdroid, config, message):
     stat = message.regex.capturesdict()['stat'][0]
