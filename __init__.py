@@ -49,7 +49,7 @@ async def get_nick(config, message):
     if message.user_id == config.get('keeper', None):
         message_nick = message.entities.get('nick', {'value': ''})['value']
         if message_nick:
-            nick = message_nick.strip()
+            nick = message_nick.strip().strip('@')
             mxid = await get_mxid(nick, message.target, message.connector)
             if not mxid:
                 await message.respond(
