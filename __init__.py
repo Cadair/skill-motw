@@ -1,4 +1,3 @@
-import regex
 from textwrap import dedent
 
 from opsdroid.database.matrix import memory_in_event_room
@@ -43,10 +42,13 @@ async def get_mxid(nick, room, connector):
     return members.get(nick, None)
 
 
-async def get_nick(config, message):
+async def get_nick(opsdroid, config, message):
     nick = message.user
     mxid = message.user_id
-    if message.user_id == config.get('keeper', None):
+    with opsdroid.get_database('matrix').memory_in_room(message.room):
+        keeper = await opsdroid.memory.get("pbta_game_master", None)
+
+    if message.user_id == keeper:
         message_nick = message.entities.get('nick', {'value': ''})['value']
         if message_nick:
             nick = message_nick.strip().strip('@')
@@ -126,7 +128,13 @@ async def migrate_old_keys(opsdroid, config, event):
 
 @match_event(UserInvite)
 async def respond_to_invites(opsdroid, config, invite):
-    if config.get('autoinvite', False):
+    # TODO: Power Level Checking
+    autoinvite = config.get('autoinvite', False)
+    if autoinvite:
+        if isinstance(autoinvite, list):
+            domain = invite.user_id.split(':')[1]
+            if not domain in autoinvite:
+                return
         return await invite.respond(JoinRoom())
 
 
@@ -194,7 +202,7 @@ async def match_command_messages(opsdroid, config, message):
                     message.update_entity(regroup, value, None)
 
         if skill_func.parse_nick:
-            nick, mxid = await get_nick(config, message)
+            nick, mxid = await get_nick(opsdroid, config, message)
             message.update_entity("nick", nick, None)
             message.update_entity("mxid", mxid, None)
 
@@ -223,7 +231,7 @@ async def match_command_messages(opsdroid, config, message):
 @command_words.add("setgame", regex=r"\s(?P<gamename>.*)")
 @memory_in_event_room
 async def set_game(opsdroid, config, message):
-    game = message.entities['gamename']["value"]
+    game = message.entities['gamename']["value"].lower()
     if game not in GAME_STATS.keys():
         message.respond(f"I don't know how to play that. Available options are: {', '.join(GAME_STATS.keys())}")
         return
@@ -237,8 +245,22 @@ async def set_game(opsdroid, config, message):
 
 
 @command_words.add("help")
+@memory_in_event_room
 async def help_message(opsdroid, config, message):
-    stats_message = ""
+    # TODO: Power Level Checking
+    # Selecting a Game and Setting Stats
+    stats_message = dedent(f"""\
+        <h1>Selecting a Game</h1>
+        <p>
+        You need to select which Powered by the Apocalypse Game you want to play.
+        Currently this bot knows how to play the following games:
+        </p>
+        {html_list(GAME_STATS.keys())}
+        <p>
+        Set which game you want to play with <code>!setgame <gamename></code>,
+        for example <code>!setgame motw</code>.
+        </p>\
+    """)
     stats = await get_stat_names(opsdroid, message.target)
     if stats:
         stats_message = dedent(f"""\
@@ -257,25 +279,56 @@ async def help_message(opsdroid, config, message):
             </p>
             <p>
             You can retrieve your characters stats with <code>!stats</code>.
+            </p>
+            <h1>
+            Experience
+            </h1>
+            <p>
+            When you roll a failure the bot will store and experience for you.
+            You can manually mark experience by running <code>+experience</code>.
+            To level up run <code>!levelup</code>.
+            To check your current experience run <code>!experience</code>.
             </p>\
         """)
-    await message.respond(dedent(f"""\
-        <p>
-        This bot makes checks against your stats, and tracks your experience.
-        </p>
-        {stats_message}
+
+    # Setting a Keeper
+    keeper_message = ""
+    keeper = await opsdroid.memory.get("pbta_game_master", None)
+    if keeper is None:
+        keeper_message = dedent("""\
         <h1>
-        Experience
+        Setting a Keeper
         </h1>
         <p>
-        When you roll a failure the bot will store and experience for you.
-        You can manually mark experience by running <code>+experience</code>.
-        To level up run <code>!levelup</code>.
-        To check your current experience run <code>!experience</code>.
-        </p>
+        Your game doesn't have a keeper yet, set yourself as keeper with <code>!setkeeper</code>.
+        The keeper can set stats and roll for other players by appending <code>@&lt;displayname&gt;</code> at the end of a command.
+        </p>\
+        """)
+    if message.user_id == keeper:
+        keeper_message = dedent("""\
+        <h1>
+        Keeper Commands
+        </h1>
         <p>
-        Remember you can set your nick to your character name with
-        <code>/myroomnick</code> in Element if you desire.
+        As the Keeper you can set stats and roll for other players by appending <code>@&lt;displayname&gt;</code> at the end of a command.
+        For example if one of your players is called Gandalf you could say <code>+cool @Gandalf</code>
+        to roll a +cool check with Gandalf's stats.
+        This works for most commands the bot supports.
+        </p>\
+        """)
+
+
+    # General usage
+    await message.respond(dedent(f"""\
+        <p>
+        This bot is here to help you play a game which uses the Powered by the Apocalypse game format.
+        It can track your stats, make checks against those stats, and track your experience.
+        </p>
+        {keeper_message}
+        {stats_message}
+        <p>
+        Remember you can set your nick to your character name with the
+        <code>/myroomnick</code> command in Element and FluffyChat if you desire.
         </p>\
     """))
 
@@ -373,6 +426,16 @@ async def level_up(opsdroid, config, message):
     await message.respond(Message(f"{nick} has levelled up 🎉"))
 
 
+@command_words.add("setkeeper")
+@memory_in_event_room
+async def set_keeper(opsdroid, config, message):
+    current_keeper = await opsdroid.memory.get("pbta_game_master", None)
+    if current_keeper is not None and current_keeper != message.user_id:
+        await message.respond("You are not the current keeper, you can't set a new one.")
+        return
+    await opsdroid.memory.put("pbta_game_master", message.user_id)
+    await message.respond(f"{message.user} is now the Keeper.")
+
 ################################################################################
 # plus command handles
 ################################################################################
@@ -394,8 +457,9 @@ async def add_experience(opsdroid, config, experience):
 
 
 @match_regex(r"\+experience(\s@\s?(?P<nick>.*))?", case_sensitive=False)
+@memory_in_event_room
 async def mark_experience(opsdroid, config, message):
-    nick, mxid = await get_nick(config, message)
+    nick, mxid = await get_nick(opsdroid, config, message)
     exp = MarkExperience(user_id=mxid, user=nick,
                          target=message.target, connector=message.connector)
 
@@ -405,7 +469,7 @@ async def mark_experience(opsdroid, config, message):
 @match_regex(rf"(?!\+experience)\+(?P<stat>\w*)(?P<modifier>\s?{MODIFIER_REGEX})?(\s@\s?(?P<nick>.*))?", case_sensitive=False)
 @memory_in_event_room
 async def roll(opsdroid, config, message):
-    nick, mxid = await get_nick(config, message)
+    nick, mxid = await get_nick(opsdroid, config, message)
 
     stat = message.regex.capturesdict()['stat'][0]
     gamestats = await get_stat_names(opsdroid, message.target)
