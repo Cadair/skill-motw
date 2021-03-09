@@ -1,54 +1,23 @@
-import re as regex
-from functools import wraps
-from random import randint
+import regex
 from textwrap import dedent
 
-from nio.responses import JoinedMembersError
 from opsdroid.database.matrix import memory_in_event_room
 from opsdroid.events import (Event, JoinRoom, Message, OpsdroidStarted,
                              UserInvite)
 from opsdroid.matchers import match_event, match_regex
+from opsdroid.parsers.regex import match_regex as parse_regex
+from opsdroid.const import REGEX_PARSE_SCORE_FACTOR
 
+from nio.responses import JoinedMembersError
+from random import randint
 
-class MarkExperience(Event):
-    _no_register = True
+import logging
 
+_LOGGER = logging.getLogger(__name__)
 
-MODIFIER_REGEX = "[+-]?[0,1,2,3]"
-GAME_STATS = {"motw": ["cool", "tough", "sharp", "charm", "weird"],
-              "pbtastartrek": ["aggressive", "bold", "talk", "tech", "morale", "shields"]}
-STAT_REGEXES = {}
-
-
-@match_event(OpsdroidStarted)
-async def migrate_old_keys(opsdroid, config, event):
-    db = opsdroid.get_database("matrix")
-    for room in opsdroid.get_connector('matrix').connection.rooms.values():
-        with db.memory_in_room(room.room_id):
-            old_key = await opsdroid.memory.get("motw_stats")
-            if old_key:
-                await opsdroid.memory.put("pbta_stats", old_key)
-                await opsdroid.memory.delete("motw_stats")
-                await opsdroid.memory.put("pbta_stat_names", GAME_STATS["motw"])
-            old_exp_key = await opsdroid.memory.get("motw_experience")
-            if old_exp_key:
-                await opsdroid.memory.put("pbta_experience", old_exp_key)
-                await opsdroid.memory.delete("motw_experience")
-
-
-@match_regex(r"\!set game ?(?P<gamename>.*)", case_sensitive=False)
-@memory_in_event_room
-async def set_game(opsdroid, config, message):
-    game = message.regex.capturesdict()['gamename'][0]
-    if game not in GAME_STATS.keys():
-        message.respond(f"I don't know how to play that. Available options are: {', '.join(GAME_STATS.keys())}")
-        return
-
-    if await opsdroid.memory.get("pbta_stat_names") and await opsdroid.memory.get("pbta_stats"):
-        await message.respond(Message("You already have a game in progress, not setting a new one."))
-
-    await opsdroid.memory.put("pbta_stat_names", GAME_STATS[game])
-
+################################################################################
+# Helper functions
+################################################################################
 
 async def get_stat_names(opsdroid, room):
     with opsdroid.get_database('matrix').memory_in_room(room):
@@ -61,6 +30,9 @@ def html_list(sequence):
 
 
 async def get_mxid(nick, room, connector):
+    if nick is None:
+        return
+
     members = await connector.connection.joined_members(
         connector.lookup_target(room)
     )
@@ -75,9 +47,9 @@ async def get_nick(config, message):
     nick = message.user
     mxid = message.user_id
     if message.user_id == config.get('keeper', None):
-        message_nick = message.regex.groupdict().get('nick', '').strip()
+        message_nick = message.entities.get('nick', {'value': ''})['value']
         if message_nick:
-            nick = message_nick
+            nick = message_nick.strip()
             mxid = await get_mxid(nick, message.target, message.connector)
             if not mxid:
                 await message.respond(
@@ -98,13 +70,172 @@ def two_d6():
     return randint(1, 6), randint(1, 6)
 
 
+async def update_exp(opsdroid, mxid, room_id, set_exp=None):
+    db = opsdroid.get_database("matrix")
+
+    with db.memory_in_room(room_id):
+        all_exp = await opsdroid.memory.get("pbta_experience") or {}
+
+    if not all_exp or mxid not in all_exp:
+        exp = 0
+    else:
+        exp = all_exp[mxid]
+
+    if set_exp is not None:
+        exp = set_exp
+    else:
+        exp += 1
+
+    all_exp[mxid] = exp
+
+    with db.memory_in_room(room_id):
+        await opsdroid.memory.put("pbta_experience", all_exp)
+
+    return all_exp
+
+
+################################################################################
+# Core Parsing
+################################################################################
+
+
+class MarkExperience(Event):
+    _no_register = True
+
+
+class StatSetCommand(Event):
+    _no_register = True
+
+
+@match_event(OpsdroidStarted)
+async def migrate_old_keys(opsdroid, config, event):
+    db = opsdroid.get_database("matrix")
+    for room in opsdroid.get_connector('matrix').connection.rooms.values():
+        with db.memory_in_room(room.room_id):
+            old_key = await opsdroid.memory.get("motw_stats")
+            if old_key:
+                await opsdroid.memory.put("pbta_stats", old_key)
+                await opsdroid.memory.delete("motw_stats")
+                await opsdroid.memory.put("pbta_stat_names", GAME_STATS["motw"])
+            old_exp_key = await opsdroid.memory.get("motw_experience")
+            if old_exp_key:
+                await opsdroid.memory.put("pbta_experience", old_exp_key)
+                await opsdroid.memory.delete("motw_experience")
+
+
 @match_event(UserInvite)
 async def respond_to_invites(opsdroid, config, invite):
     if config.get('autoinvite', False):
         return await invite.respond(JoinRoom())
 
 
-@match_regex("!help")
+MODIFIER_REGEX = "[+-]?[0,1,2,3]"
+GAME_STATS = {"motw": ["cool", "tough", "sharp", "charm", "weird"],
+              "pbtastartrek": ["aggressive", "bold", "talk", "tech", "morale", "shields"]}
+STAT_REGEXES = {}
+
+
+class CommandRegister:
+    command_words = []
+    dispatcher = {}
+
+    def add(self, *words, regex=None, parse_nick=False):
+        if regex is not None and parse_nick:
+            raise ValueError("Can't handle generic secondary regex and nick extraction.")
+        def decorator(func):
+            func.second_regex = regex
+            func.parse_nick = parse_nick
+            for word in words:
+                self.dispatcher[word] = func
+            return func
+        return decorator
+
+    def __contains__(self, key):
+        return key in self.dispatcher
+
+    def __call__(self, word):
+        return self.dispatcher[word]
+
+
+command_words = CommandRegister()
+
+
+@match_regex(r"!(?<word>\w*).*", case_sensitive=False)
+async def match_command_messages(opsdroid, config, message):
+    """
+    This is the main word of Command dispatcher.
+
+    It matches all messages starting with `!word` and then calls the
+    appropriate skill.
+    """
+    _LOGGER.debug("word of Command has been spoken")
+    word = message.entities['word']['value']
+    # Handle words of Command
+    if word in command_words:
+        skill_func = command_words(word)
+
+        # We now pretend to be the match_regex matcher for the secondary regex
+        opts = {"matching_condition": "match",
+                "case_sensitive": False,
+                "score_factor": REGEX_PARSE_SCORE_FACTOR}
+
+        if skill_func.parse_nick:
+            opts["expression"] = rf"!{word}" + r"(?:\s@\s?(?P<nick>.*))?"
+
+        if skill_func.second_regex:
+            opts["expression"] = rf"!{word}" + skill_func.second_regex
+
+        if "expression" in opts:
+            matched_regex = await parse_regex(message.text, opts)
+            if matched_regex:
+                message.regex = matched_regex
+                for regroup, value in matched_regex.groupdict().items():
+                    message.update_entity(regroup, value, None)
+
+        if skill_func.parse_nick:
+            nick, mxid = await get_nick(config, message)
+            message.update_entity("nick", nick, None)
+            message.update_entity("mxid", mxid, None)
+
+        await skill_func(opsdroid, config, message)
+        return
+
+    # Handle stats
+    if word in await get_stat_names(opsdroid, message.target):
+        await opsdroid.parse(
+            StatSetCommand(
+                target=message.target,
+                connector=message.connector,
+                linked_event=message,
+            )
+        )
+        return
+
+    await message.respond(f"You have no power here - !{word}")
+
+
+################################################################################
+# bang command handles
+################################################################################
+
+
+@command_words.add("setgame", regex=r"\s(?P<gamename>.*)")
+@memory_in_event_room
+async def set_game(opsdroid, config, message):
+    game = message.entities['gamename']["value"]
+    if game not in GAME_STATS.keys():
+        message.respond(f"I don't know how to play that. Available options are: {', '.join(GAME_STATS.keys())}")
+        return
+
+    if await opsdroid.memory.get("pbta_stat_names") and await opsdroid.memory.get("pbta_stats"):
+        await message.respond(Message("You already have a game in progress, not setting a new one."))
+
+    await opsdroid.memory.put("pbta_stat_names", GAME_STATS[game])
+
+    await message.respond(f"Set the game to be: {game}")
+
+
+@command_words.add("help")
 async def help_message(opsdroid, config, message):
     stats_message = ""
     stats = await get_stat_names(opsdroid, message.target)
@@ -148,34 +279,34 @@ async def help_message(opsdroid, config, message):
     """))
 
 
-async def filter_by_game_stats(opsdroid, string, room, action):
-    """Match incoming messages against the current games stats."""
-    if room not in STAT_REGEXES.keys():
-        gamestats = await get_stat_names(opsdroid, room)
-        if not gamestats:
-            return []
-        STAT_REGEXES[room] = {"set": regex.compile(f"(?:(?:{'|'.join(['!'+s for s in gamestats])}) {MODIFIER_REGEX})",
-                                                   flags=regex.IGNORECASE),
-                              "roll": regex.compile("|".join(gamestats), flags=regex.IGNORECASE)}
-    stats = STAT_REGEXES[room][action].findall(string)
-    return stats
-
-
-@match_regex("(?P<nick>[^!]*)(?P<stats>!(?!set|help|levelup|stats|experience).*)", case_sensitive=False)
+@match_event(StatSetCommand)
 @memory_in_event_room
-async def set_stats(opsdroid, config, message):
-    nick, mxid = await get_nick(config, message)
+async def set_stats(opsdroid, config, event):
+    message = event.linked_event
 
-    stats = message.text
-    if nick != message.user:
-        stats = message.text.split(nick)[1]
+    split = message.text.split('@')
+    if len(split) == 1:
+        split.append(None)
 
-    stats = await filter_by_game_stats(opsdroid, stats, message.target, "set")
-    if not stats:
-        await message.respond("I can't find any stats, are you sure you've told me what game we're playing?")
-        return
+    stats, nick = split
+
+    if nick is None:
+        nick = message.user
+        mxid = message.user_id
+    else:
+        nick = nick.strip()
+        mxid = await get_mxid(nick, message.target, message.connector)
+
+    stats = [s.strip() for s in stats.split("!") if s]
     stats = tuple(s.split(' ') for s in stats)
-    stats = dict((s[0].lower()[1:], int(s[1])) for s in stats)
+    stats = dict((s[0].lower(), int(s[1])) for s in stats)
+
+    stat_names = set(await get_stat_names(opsdroid, message.target))
+    unknown_stats = set(stats).difference(stat_names)
+    if unknown_stats:
+        await message.respond(f"Could not set stats: {', '.join(unknown_stats)}."
+                              f" They are not valid for this game, valid stats are: {', '.join(stat_names)}")
+        return
 
     all_stats = await opsdroid.memory.get("pbta_stats") or {}
     if not all_stats or mxid not in all_stats:
@@ -191,30 +322,109 @@ async def set_stats(opsdroid, config, message):
     await opsdroid.memory.put("pbta_stats", new_stats)
 
 
-@match_regex(f"\+(?P<stat>\w*[^experience]) ?(?P<modifier>{MODIFIER_REGEX})?", case_sensitive=False)
+@command_words.add("stats", parse_nick=True)
+@memory_in_event_room
+async def print_stats(opsdroid, config, message):
+    nick = message.entities["nick"]["value"]
+    mxid = message.entities["mxid"]["value"]
+
+    all_stats = await opsdroid.memory.get("pbta_stats")
+    if not all_stats or mxid not in all_stats:
+        await message.respond(rf"No stats found for {nick}, run '!<stat> +number'")
+        return
+
+    stats = all_stats[mxid]
+    await message.respond(f"Stats for {nick}: {pretty_stats(stats)}")
+
+
+@command_words.add("experience", parse_nick=True)
+@memory_in_event_room
+async def get_experience(opsdroid, config, message):
+    nick = message.entities["nick"]["value"]
+    mxid = message.entities["mxid"]["value"]
+    all_exp = await opsdroid.memory.get("pbta_experience") or {}
+
+    if not all_exp or mxid not in all_exp:
+        all_exp[mxid] = 0
+
+    await message.respond(f"{nick} has {all_exp[mxid]} experience.")
+
+
+@command_words.add("levelup", parse_nick=True)
+@memory_in_event_room
+async def level_up(opsdroid, config, message):
+    nick = message.entities["nick"]["value"]
+    mxid = message.entities["mxid"]["value"]
+
+    all_exp = await opsdroid.memory.get("pbta_experience") or {}
+
+    if not all_exp or mxid not in all_exp:
+        exp = 0
+    else:
+        exp = all_exp[mxid]
+
+    if exp < 5:
+        await message.respond(f"{nick} does not have enough experience to level up.")
+        return
+
+    await update_exp(opsdroid, mxid, message.target, set_exp=exp - 5)
+
+    await message.respond(Message(f"{nick} has levelled up 🎉"))
+
+
+################################################################################
+# plus command handles
+################################################################################
+
+
+@match_event(MarkExperience)
+@memory_in_event_room
+async def add_experience(opsdroid, config, experience):
+    all_exp = await update_exp(opsdroid, experience.user_id, experience.target)
+    exp = all_exp[experience.user_id]
+
+    await experience.respond(
+        Message(f"{experience.user} now has {exp} experience."))
+
+    if exp >= 5:
+        await experience.respond(
+            Message("You have 5 experience you can level up!")
+        )
+
+
+@match_regex(r"\+experience(\s@\s?(?P<nick>.*))?", case_sensitive=False)
+async def mark_experience(opsdroid, config, message):
+    nick, mxid = await get_nick(config, message)
+    exp = MarkExperience(user_id=mxid, user=nick,
+                         target=message.target, connector=message.connector)
+
+    return await opsdroid.parse(exp)
+
+
+@match_regex(rf"(?!\+experience)\+(?P<stat>\w*)(?P<modifier>\s?{MODIFIER_REGEX})?(\s@\s?(?P<nick>.*))?", case_sensitive=False)
 @memory_in_event_room
 async def roll(opsdroid, config, message):
+    nick, mxid = await get_nick(config, message)
+
     stat = message.regex.capturesdict()['stat'][0]
-    stat = await filter_by_game_stats(opsdroid, stat, message.target, "roll")
-    if not stat:
+    gamestats = await get_stat_names(opsdroid, message.target)
+    if stat not in gamestats:
         return
-    stat = stat[0]
 
     modifier = message.regex.groupdict()['modifier'] or 0
     modifier = int(modifier)
-    mxid = message.user_id
 
     all_stats = await opsdroid.memory.get("pbta_stats")
 
     if not all_stats or mxid not in all_stats:
-        await message.respond(rf"No stats found for {message.user}, run '!{stat} +number'")
+        await message.respond(rf"No stats found for {nick}, run '!{stat} +number'")
         return
 
     stats = all_stats[mxid]
 
     if stat not in stats:
         await message.respond(
-            rf"You have not set {stat}, run '!{stat} +number'"
+            rf"{nick} has not set {stat}, run '!{stat} +number'"
         )
         return
 
@@ -237,106 +447,11 @@ async def roll(opsdroid, config, message):
     else:
         equation = f"{d1} + {d2} {stat_sign} {abs(stat)}"
     await message.respond(
-        f'<a href="https://matrix.to/#/{message.user_id}">{message.user}</a> rolled {equation} = {number_result} ({result})'
+        f'<a href="https://matrix.to/#/{mxid}">{nick}</a> rolled {equation} = {number_result} ({result})'
     )
 
     if number_result <= 6:
-        await opsdroid.parse(MarkExperience(user_id=message.user_id,
-                                            user=message.user,
+        await opsdroid.parse(MarkExperience(user_id=mxid,
+                                            user=nick,
                                             target=message.target,
                                             connector=message.connector))
-
-
-@match_regex("!stats ?(?P<nick>.*)")
-@memory_in_event_room
-async def print_stats(opsdroid, config, message):
-    nick, mxid = await get_nick(config, message)
-
-    all_stats = await opsdroid.memory.get("pbta_stats")
-    if not all_stats or mxid not in all_stats:
-        await message.respond(rf"No stats found for {nick}, run '!<stat> +number'")
-        return
-
-    stats = all_stats[mxid]
-    await message.respond(f"Stats for {nick}: {pretty_stats(stats)}")
-
-
-async def update_exp(opsdroid, mxid, room_id, set_exp=None):
-    db = opsdroid.get_database("matrix")
-
-    with db.memory_in_room(room_id):
-        all_exp = await opsdroid.memory.get("pbta_experience") or {}
-
-    if not all_exp or mxid not in all_exp:
-        exp = 0
-    else:
-        exp = all_exp[mxid]
-
-    if set_exp is not None:
-        exp = set_exp
-    else:
-        exp += 1
-
-    all_exp[mxid] = exp
-
-    with db.memory_in_room(room_id):
-        await opsdroid.memory.put("pbta_experience", all_exp)
-
-    return all_exp
-
-
-@match_event(MarkExperience)
-@memory_in_event_room
-async def add_experience(opsdroid, config, experience):
-    all_exp = await update_exp(opsdroid, experience.user_id, experience.target)
-    exp = all_exp[experience.user_id]
-
-    await experience.respond(
-        Message(f"{experience.user} now has {exp} experience."))
-
-    if exp >= 5:
-        await experience.respond(
-            Message("You have 5 experience you can level up!")
-        )
-
-
-@match_regex(r"\+experience ?(?P<nick>.*)", case_sensitive=False)
-async def mark_experience(opsdroid, config, message):
-    nick, mxid = await get_nick(config, message)
-    exp = MarkExperience(user_id=mxid, user=nick,
-                         target=message.target, connector=message.connector)
-
-    return await opsdroid.parse(exp)
-
-
-@match_regex("!experience ?(?P<nick>.*)", case_sensitive=False)
-@memory_in_event_room
-async def get_experience(opsdroid, config, message):
-    nick, mxid = await get_nick(config, message)
-    all_exp = await opsdroid.memory.get("pbta_experience") or {}
-
-    if not all_exp or mxid not in all_exp:
-        all_exp[mxid] = 0
-
-    await message.respond(f"{nick} has {all_exp[mxid]} experience.")
-
-
-@match_regex(r"\!levelup ?(?P<nick>.*)", case_sensitive=False)
-@memory_in_event_room
-async def level_up(opsdroid, config, message):
-    nick, mxid = await get_nick(config, message)
-
-    all_exp = await opsdroid.memory.get("pbta_experience") or {}
-
-    if not all_exp or mxid not in all_exp:
-        exp = 0
-    else:
-        exp = all_exp[mxid]
-
-    if exp < 5:
-        await message.respond(f"{nick} does not have enough experience to level up.")
-        return
-
-    await update_exp(opsdroid, mxid, message.target, set_exp=exp - 5)
-
-    await message.respond(Message(f"{nick} has levelled up 🎉"))

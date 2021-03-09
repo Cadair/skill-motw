@@ -16,10 +16,10 @@ Adding your Stats
 You can set your character stats by running sending commands like ``!cool +2`` or
 ``!tough -1``.
 If your Keeper wants to set stats they can do this by a) being the configured
-keeper in the config and b) sending ``<nick> !cool +2``.
+keeper in the config and b) sending ``!cool +2 @<nick>``.
 
 These commands can be chained so sending ``!cool +2 !tough +1`` or as the
-Keeper ``<nick> !cool +2 !tough +1``.
+Keeper ``!cool +2 !tough +1 @<nick>``.
 
 
 Viewing your Stats
