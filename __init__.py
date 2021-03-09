@@ -55,7 +55,7 @@ async def get_nick(config, message):
                 await message.respond(
                     f"Could not find the user {nick} in the room."
                 )
-            return message.user, message.mxid
+            return message.user, message.user_id
     return nick, mxid
 
 
