@@ -45,7 +45,7 @@ async def get_mxid(nick, room, connector):
 async def get_nick(opsdroid, config, message):
     nick = message.user
     mxid = message.user_id
-    with opsdroid.get_database('matrix').memory_in_room(message.room):
+    with opsdroid.get_database('matrix').memory_in_room(message.target):
         keeper = await opsdroid.memory.get("pbta_game_master", None)
 
     if message.user_id == keeper:
